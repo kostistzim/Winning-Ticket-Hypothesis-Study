@@ -1,0 +1,14 @@
+[project]
+name = "winning-ticket-hypothesis-study"
+version = "0.1.0"
+description = "Reproducing the Lottery Ticket Hypothesis results with LeNet-300-100 on MNIST"
+requires-python = ">=3.9"
+
+dependencies = [
+    "torch>=2.4.0",
+    "torchvision>=0.19.0",
+    "tqdm>=4.66.4",
+    "matplotlib>=3.9.2",
+    "pandas>=2.2.2",
+    "numpy>=1.26.4"
+]
