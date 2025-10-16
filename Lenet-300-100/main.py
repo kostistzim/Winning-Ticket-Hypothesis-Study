@@ -21,22 +21,24 @@ def iterative_pruning(device, train_loader, val_loader, test_loader, total_itera
     initial_state = torch.load("models/lenet300_100_initial.pth", map_location=device)
     trained_state = torch.load("models/lenet300_100_trained.pth", map_location=device)
 
-    model = LeNet().to(device)
-    model.load_state_dict(trained_state)
+    # Model for tracking pruning masks
+    pruning_model = LeNet().to(device)
+    pruning_model.load_state_dict(trained_state)
 
     for round_idx in range(1, num_rounds+1):
         print(f"\n=== Iterative Pruning Round {round_idx}/{num_rounds} ===")
 
         # Pruning
-        layerwise_prune(model, pruning_rate=pruning_rate)
-        sparsity = compute_global_sparsity(model)
+        effective_rate = 1 - ((1 - pruning_rate) ** (1 / round_idx))
+        layerwise_prune(pruning_model, pruning_rate=effective_rate)
+        sparsity = compute_global_sparsity(pruning_model)
         density = 1 - sparsity
         print(f"Global sparsity: {sparsity * 100:.2f}%")
 
         # Apply sparsity mask to initial model
         rewind_model = LeNet().to(device)
         rewind_model.load_state_dict(initial_state)
-        apply_mask(rewind_model, model)
+        apply_mask(rewind_model, pruning_model)
 
         # Retrain
         optimizer = optim.Adam(rewind_model.parameters(), lr=1.2e-3)
@@ -53,7 +55,7 @@ def iterative_pruning(device, train_loader, val_loader, test_loader, total_itera
         filename = f"models/lenet300_100_density_{density*100:.1f}.pth"
         torch.save(rewind_model.state_dict(), filename)
 
-        model = rewind_model
+        pruning_model = rewind_model
 
 def main():
     # Set seed
@@ -72,7 +74,7 @@ def main():
     train_loader, val_loader, test_loader = load_dataset()
     optimizer = optim.Adam(model.parameters(), lr=1.2e-3)
     criterion = nn.CrossEntropyLoss()
-    total_iterations = 50000
+    total_iterations = 1000
 
     # Save initial weights before training
     torch.save(model.cpu().state_dict(), "models/lenet300_100_initial.pth")

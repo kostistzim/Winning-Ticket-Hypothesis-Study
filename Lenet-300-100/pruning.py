@@ -28,7 +28,6 @@ def layerwise_prune(model, pruning_rate=0.2):
             w = m.weight.data
             total += w.numel()
             zeros += (w == 0).sum().item()
-    print(f"Global sparsity: {100.0 * zeros / total:.2f}%")
     return model
 
 def apply_mask(model, mask):
