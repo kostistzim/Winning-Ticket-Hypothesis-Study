@@ -8,7 +8,7 @@ def make_mask(model:nn.Module)->dict:
     current_mask={name:torch.ones_like(para) for name,para in model.state_dict().items() if 'weight' in name}
     return current_mask
 
-def pruning_by_percentage(model:nn.Module,percentage:int=20,current_mask:bool=False)->dict:
+def global_pruning_by_percentage(model:nn.Module,percentage:int=20,current_mask:bool=False)->dict:
     """Applies pruning by percentage."""
     current_weights=[]
 
