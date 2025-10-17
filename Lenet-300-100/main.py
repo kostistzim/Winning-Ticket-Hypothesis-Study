@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import numpy as np
+import argparse
 from torch import optim, nn
 
 from LeNet import LeNet
@@ -17,9 +18,10 @@ def set_seed(seed=42):
     torch.backends.cudnn.benchmark = False
 
 
-def iterative_pruning(device, train_loader, val_loader, test_loader, total_iterations, num_rounds=5, pruning_rate=0.2):
-    initial_state = torch.load("models/lenet300_100_initial.pth", map_location=device)
-    trained_state = torch.load("models/lenet300_100_trained.pth", map_location=device)
+def iterative_pruning(device, train_loader, val_loader, test_loader,
+                      total_iterations, trial, num_rounds=20, pruning_rate=0.2):
+    initial_state = torch.load(f"models/trial_{trial}/lenet300_100_initial.pth", map_location=device)
+    trained_state = torch.load(f"models/trial_{trial}/lenet300_100_trained.pth", map_location=device)
 
     # Model for tracking pruning masks
     pruning_model = LeNet().to(device)
@@ -29,8 +31,7 @@ def iterative_pruning(device, train_loader, val_loader, test_loader, total_itera
         print(f"\n=== Iterative Pruning Round {round_idx}/{num_rounds} ===")
 
         # Pruning
-        effective_rate = 1 - ((1 - pruning_rate) ** (1 / round_idx))
-        layerwise_prune(pruning_model, pruning_rate=effective_rate)
+        layerwise_prune(pruning_model, pruning_rate=pruning_rate, pruning_round=round_idx)
         sparsity = compute_global_sparsity(pruning_model)
         density = 1 - sparsity
         print(f"Global sparsity: {sparsity * 100:.2f}%")
@@ -49,35 +50,39 @@ def iterative_pruning(device, train_loader, val_loader, test_loader, total_itera
               val_loader=val_loader,
               test_loader=test_loader,
               evaluate_fn=evaluate,
-              save_log_path=f"logs/pruned_{density * 100:.1f}.csv")
+              save_log_path=f"logs/trial_{trial}/pruned_{density * 100:.1f}.csv")
 
         # Save pruned model
-        filename = f"models/lenet300_100_density_{density*100:.1f}.pth"
+        filename = f"models/trial_{trial}/lenet300_100_density_{density * 100:.1f}.pth"
         torch.save(rewind_model.state_dict(), filename)
 
-        pruning_model = rewind_model
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--trial", type=int, default=0, help="Trial index")
+    args = parser.parse_args()
+    trial = args.trial
+
     # Set seed
-    set_seed(42)
+    set_seed(42 + trial)
 
     # Create directories
-    Path("models").mkdir(exist_ok=True)
-    Path("logs").mkdir(exist_ok=True)
+    Path(f"models/trial_{trial}").mkdir(parents=True, exist_ok=True)
+    Path(f"logs/trial_{trial}").mkdir(parents=True, exist_ok=True)
 
     # Set device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print("device:", device)
+    print(f"Device: {device} | Trial: {trial}")
 
     # Setup
     model = LeNet().to(device)
     train_loader, val_loader, test_loader = load_dataset()
     optimizer = optim.Adam(model.parameters(), lr=1.2e-3)
     criterion = nn.CrossEntropyLoss()
-    total_iterations = 1000
+    total_iterations = 50000
 
     # Save initial weights before training
-    torch.save(model.cpu().state_dict(), "models/lenet300_100_initial.pth")
+    torch.save(model.cpu().state_dict(), f"models/trial_{trial}/lenet300_100_initial.pth")
     model.to(device)
 
     # Train dense model and evaluate
@@ -86,15 +91,16 @@ def main():
           val_loader=val_loader,
           test_loader=test_loader,
           evaluate_fn=evaluate,
-          save_log_path="logs/dense_training_log.csv")
+          save_log_path=f"logs/trial_{trial}/dense_training_log.csv")
 
     # Save trained model
-    torch.save(model.cpu().state_dict(), "models/lenet300_100_trained.pth")
+    torch.save(model.cpu().state_dict(), f"models/trial_{trial}/lenet300_100_trained.pth")
     model.to(device)
 
     # Start iterative pruning
     print("\n=== Starting Iterative Pruning ===")
-    iterative_pruning(device, train_loader, val_loader, test_loader, total_iterations, num_rounds=5, pruning_rate=0.2)
+    iterative_pruning(device, train_loader, val_loader, test_loader,
+                      total_iterations, trial, num_rounds=5, pruning_rate=0.2)
 
 if __name__ == "__main__":
     main()
