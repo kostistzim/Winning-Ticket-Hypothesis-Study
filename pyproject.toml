@@ -49,6 +49,7 @@ exclude = [
     # ---- project specific ----
     # Exclude tools so they don't get the __future__ imports
     "Lenet-300-100/*"
+    "CNN/*"
 
 ]
 
