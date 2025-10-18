@@ -100,7 +100,7 @@ def main():
     # Start iterative pruning
     print("\n=== Starting Iterative Pruning ===")
     iterative_pruning(device, train_loader, val_loader, test_loader,
-                      total_iterations, trial, num_rounds=5, pruning_rate=0.2)
+                      total_iterations, trial, num_rounds=20, pruning_rate=0.2)
 
 if __name__ == "__main__":
     main()
