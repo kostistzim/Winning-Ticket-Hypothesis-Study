@@ -38,5 +38,5 @@ class LeNet(nn.Module):
     def _initialize_weights(self):
         for m in self.modules():
             if isinstance(m, nn.Linear):
-                nn.init.xavier_normal_(m.weight)
+                nn.init.xavier_uniform_(m.weight)
                 nn.init.zeros_(m.bias)
