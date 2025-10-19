@@ -135,5 +135,6 @@ models/
 
 .idea/
 
-logs/
+outputs/
 
+logs/

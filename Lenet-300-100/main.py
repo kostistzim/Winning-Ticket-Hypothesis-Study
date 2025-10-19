@@ -30,8 +30,25 @@ def iterative_pruning(device, train_loader, val_loader, test_loader,
     for round_idx in range(1, num_rounds+1):
         print(f"\n=== Iterative Pruning Round {round_idx}/{num_rounds} ===")
 
+        # DEBUG CHECK
+        if round_idx > 1:
+            print(f"\n[DEBUG] Checking pruning_model BEFORE pruning in round {round_idx}:")
+            for name, module in pruning_model.named_modules():
+                if isinstance(module, torch.nn.Linear):
+                    # Use module.weight (not .data) to get masked weights
+                    # Or check the mask directly
+                    if hasattr(module, 'weight_mask'):
+                        mask = module.weight_mask
+                        sparsity = 100.0 * (mask == 0).sum().item() / mask.numel()
+                    else:
+                        weight = module.weight.data
+                        sparsity = 100.0 * (weight == 0).sum().item() / weight.numel()
+                    print(f"  {name}.weight: {sparsity:.2f}% sparse")
+            sparsity = compute_global_sparsity(pruning_model)
+            print(f"  Global: {sparsity * 100:.2f}% sparse")
+
         # Pruning
-        layerwise_prune(pruning_model, pruning_rate=pruning_rate, pruning_round=round_idx)
+        layerwise_prune(pruning_model, pruning_rate=pruning_rate, output_rate= 0.5 * pruning_rate)
         sparsity = compute_global_sparsity(pruning_model)
         density = 1 - sparsity
         print(f"Global sparsity: {sparsity * 100:.2f}%")
@@ -55,6 +72,9 @@ def iterative_pruning(device, train_loader, val_loader, test_loader,
         # Save pruned model
         filename = f"models/trial_{trial}/lenet300_100_density_{density * 100:.1f}.pth"
         torch.save(rewind_model.state_dict(), filename)
+
+        # Update pruning model for next round
+        pruning_model.load_state_dict(rewind_model.state_dict())
 
 
 def main():

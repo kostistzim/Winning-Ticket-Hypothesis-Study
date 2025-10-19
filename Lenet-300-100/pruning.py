@@ -3,50 +3,64 @@ import torch.nn.utils.prune as prune
 
 
 def compute_global_sparsity(model):
-    total_params = 0
-    zero_params = 0
+    total, zeros = 0, 0
     for module in model.modules():
         if isinstance(module, torch.nn.Linear):
-            tensor = module.weight.data
-            total_params += tensor.numel()
-            zero_params += (tensor == 0).sum().item()
+            if hasattr(module, "weight_mask"):
+                mask = module.weight_mask
+                total += mask.numel()
+                zeros += (mask == 0).sum().item()
+            else:
+                w = module.weight.data
+                total += w.numel()
+                zeros += (w == 0).sum().item()
+    return zeros / total
 
-    print("Total params: %d" % total_params)
-    print("Zero params: %d" % zero_params)
-    return zero_params / total_params
 
-
-def layerwise_prune(model, pruning_rate=0.2, pruning_round=1):
-    """Layer-wise magnitude pruning, output layer pruned at half rate."""
+def layerwise_prune(model, pruning_rate=0.2, output_rate=0.1):
+    """
+    Iteratively prune the network layer-by-layer by a fixed rate.
+    Keeps cumulative pruning across rounds (zero weights stay zero).
+    """
     for name, module in model.named_modules():
         if isinstance(module, torch.nn.Linear):
-            # Set pruning amount
-            rate = pruning_rate if name != "fc3" else pruning_rate / 2
-            target_sparsity = 1 - (1 - rate) ** pruning_round
+            rate = output_rate if name == "fc3" else pruning_rate
 
-            # Prune and remove zero weights
-            prune.l1_unstructured(module, name="weight", amount=target_sparsity)
-            prune.remove(module, 'weight')
+            if hasattr(module, "weight_mask"):
+                # Already has pruning active - need to prune MORE weights
+                current_mask = module.weight_mask.detach().clone()
 
+                # Get the actual weights (with mask applied)
+                weight = module.weight.detach().abs()
 
-            sparsity = 100.0 * (module.weight == 0).sum().item() / module.weight.nelement()
-            print(f"Sparsity in {name}.weight: {sparsity:.2f}% (target {target_sparsity * 100:.1f}%)")
+                # Only consider currently non-zero weights for pruning
+                active_weights = weight[current_mask == 1]
 
-    total, zeros = 0, 0
-    for m in model.modules():
-        if isinstance(m, torch.nn.Linear):
-            w = m.weight.data
-            total += w.numel()
-            zeros += (w == 0).sum().item()
+                if len(active_weights) > 0:
+                    # Calculate threshold: prune 'rate' of remaining weights
+                    k = int(rate * len(active_weights))
+                    if k > 0:
+                        threshold = torch.kthvalue(active_weights.flatten(), k).values
+
+                        # Create new mask: keep old zeros AND newly pruned weights as zero
+                        new_mask = current_mask.clone()
+                        new_mask[(weight <= threshold) & (current_mask == 1)] = 0
+
+                        # Update the mask
+                        module.weight_mask.data.copy_(new_mask)
+            else:
+                # First time pruning this layer
+                prune.l1_unstructured(module, name="weight", amount=rate)
+
+            # Compute sparsity for reporting
+            mask = module.weight_mask
+            sparsity = 100.0 * (mask == 0).sum().item() / mask.numel()
+            print(f"Sparsity in {name}.weight: {sparsity:.2f}% (pruned {rate * 100:.1f}% this round)")
+
     return model
 
-
 def apply_mask(model, mask_model):
-    """Apply the mask from mask_model to model by zeroing out weights."""
-    with torch.no_grad():
-        model_layers = {name: m for name, m in model.named_modules() if isinstance(m, torch.nn.Linear)}
-        mask_layers = {name: m for name, m in mask_model.named_modules() if isinstance(m, torch.nn.Linear)}
-
-        for name in model_layers:
-            if name in mask_layers:
-                model_layers[name].weight.data[mask_layers[name].weight == 0] = 0
+    """Copy pruning masks from mask_model into model."""
+    for (name, m), (_, mask_m) in zip(model.named_modules(), mask_model.named_modules()):
+        if isinstance(m, torch.nn.Linear) and hasattr(mask_m, "weight_mask"):
+            prune.custom_from_mask(m, name="weight", mask=mask_m.weight_mask)
