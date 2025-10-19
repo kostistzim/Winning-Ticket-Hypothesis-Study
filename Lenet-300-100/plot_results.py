@@ -80,7 +80,7 @@ def plot_accuracy_curves(
 if __name__ == "__main__":
     plot_accuracy_curves(
         log_dir="one-shot-training-logs/logs",
-        densities=["100.0", "51.3", "21.1", "7.0", "3.6", "1.9"],
+        densities=["80.0", "51.3", "21.1"],
         interval=100,
         err_interval=1000,
         max_iter=20000
