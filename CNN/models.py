@@ -3,7 +3,7 @@ import torch.nn as nn
 
 # 2 layer CNN architecture
 class Conv2(nn.Module):
-    def __init__(self):
+    def __init__(self, dropout_rate): # <--- ADD THIS ARGUMENT
         super(Conv2, self).__init__()
         #layers
         self.features = nn.Sequential(
@@ -18,8 +18,10 @@ class Conv2(nn.Module):
         self.classifier = nn.Sequential(
             nn.Linear(64 * 16 * 16, 256), # Input size after one max-pool
             nn.ReLU(True),
+            nn.Dropout(p=dropout_rate),  # <--- ADD DROPOUT LAYER
             nn.Linear(256, 256),
             nn.ReLU(True),
+            nn.Dropout(p=dropout_rate),  # <--- ADD DROPOUT LAYER
             nn.Linear(256, 10),
         )
 
@@ -31,7 +33,7 @@ class Conv2(nn.Module):
 
 #4 layer CNN architecture
 class Conv4(nn.Module):
-    def __init__(self):
+    def __init__(self, dropout_rate): # <--- ADD THIS ARGUMENT
         super(Conv4, self).__init__()
         #layers
         self.features = nn.Sequential(
@@ -52,8 +54,10 @@ class Conv4(nn.Module):
         self.classifier = nn.Sequential(
             nn.Linear(128 * 8 * 8, 256), 
             nn.ReLU(True),
+            nn.Dropout(p=dropout_rate),  # <--- ADD DROPOUT LAYER
             nn.Linear(256, 256),
             nn.ReLU(True),
+            nn.Dropout(p=dropout_rate),  # <--- ADD DROPOUT LAYER
             nn.Linear(256, 10),
         )
 
@@ -65,7 +69,7 @@ class Conv4(nn.Module):
 
 # 6 layer cnn architecture
 class Conv6(nn.Module):
-    def __init__(self):
+    def __init__(self, dropout_rate): # <--- ADD THIS ARGUMENT
         super(Conv6, self).__init__()
         self.features = nn.Sequential(
             # Block 1
@@ -90,8 +94,10 @@ class Conv6(nn.Module):
         self.classifier = nn.Sequential(
             nn.Linear(256 * 4 * 4, 256), 
             nn.ReLU(True),
+            nn.Dropout(p=dropout_rate), 
             nn.Linear(256, 256),
             nn.ReLU(True),
+            nn.Dropout(p=dropout_rate),  
             nn.Linear(256, 10),
         )
 
