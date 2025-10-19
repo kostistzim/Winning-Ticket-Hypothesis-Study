@@ -1,0 +1,75 @@
+# --- Baseline Experiments (Figure 5) ---
+
+# Conv-2 (Seeds 1-5)
+--arch Conv-2 --run_type winning_ticket --lr 2e-4 --epochs 24 --conv_prune_rate 0.10 --fc_prune_rate 0.20 --seed 1
+--arch Conv-2 --run_type winning_ticket --lr 2e-4 --epochs 24 --conv_prune_rate 0.10 --fc_prune_rate 0.20 --seed 2
+--arch Conv-2 --run_type winning_ticket --lr 2e-4 --epochs 24 --conv_prune_rate 0.10 --fc_prune_rate 0.20 --seed 3
+--arch Conv-2 --run_type winning_ticket --lr 2e-4 --epochs 24 --conv_prune_rate 0.10 --fc_prune_rate 0.20 --seed 4
+--arch Conv-2 --run_type winning_ticket --lr 2e-4 --epochs 24 --conv_prune_rate 0.10 --fc_prune_rate 0.20 --seed 5
+--arch Conv-2 --run_type random_reinit --lr 2e-4 --epochs 24 --conv_prune_rate 0.10 --fc_prune_rate 0.20 --seed 1
+--arch Conv-2 --run_type random_reinit --lr 2e-4 --epochs 24 --conv_prune_rate 0.10 --fc_prune_rate 0.20 --seed 2
+--arch Conv-2 --run_type random_reinit --lr 2e-4 --epochs 24 --conv_prune_rate 0.10 --fc_prune_rate 0.20 --seed 3
+--arch Conv-2 --run_type random_reinit --lr 2e-4 --epochs 24 --conv_prune_rate 0.10 --fc_prune_rate 0.20 --seed 4
+--arch Conv-2 --run_type random_reinit --lr 2e-4 --epochs 24 --conv_prune_rate 0.10 --fc_prune_rate 0.20 --seed 5
+
+# Conv-4 (Seeds 1-5)
+--arch Conv-4 --run_type winning_ticket --lr 3e-4 --epochs 30 --conv_prune_rate 0.10 --fc_prune_rate 0.20 --seed 1
+--arch Conv-4 --run_type winning_ticket --lr 3e-4 --epochs 30 --conv_prune_rate 0.10 --fc_prune_rate 0.20 --seed 2
+--arch Conv-4 --run_type winning_ticket --lr 3e-4 --epochs 30 --conv_prune_rate 0.10 --fc_prune_rate 0.20 --seed 3
+--arch Conv-4 --run_type winning_ticket --lr 3e-4 --epochs 30 --conv_prune_rate 0.10 --fc_prune_rate 0.20 --seed 4
+--arch Conv-4 --run_type winning_ticket --lr 3e-4 --epochs 30 --conv_prune_rate 0.10 --fc_prune_rate 0.20 --seed 5
+--arch Conv-4 --run_type random_reinit --lr 3e-4 --epochs 30 --conv_prune_rate 0.10 --fc_prune_rate 0.20 --seed 1
+--arch Conv-4 --run_type random_reinit --lr 3e-4 --epochs 30 --conv_prune_rate 0.10 --fc_prune_rate 0.20 --seed 2
+--arch Conv-4 --run_type random_reinit --lr 3e-4 --epochs 30 --conv_prune_rate 0.10 --fc_prune_rate 0.20 --seed 3
+--arch Conv-4 --run_type random_reinit --lr 3e-4 --epochs 30 --conv_prune_rate 0.10 --fc_prune_rate 0.20 --seed 4
+--arch Conv-4 --run_type random_reinit --lr 3e-4 --epochs 30 --conv_prune_rate 0.10 --fc_prune_rate 0.20 --seed 5
+
+# Conv-6 (Seeds 1-5)
+--arch Conv-6 --run_type winning_ticket --lr 3e-4 --epochs 36 --conv_prune_rate 0.15 --fc_prune_rate 0.20 --seed 1
+--arch Conv-6 --run_type winning_ticket --lr 3e-4 --epochs 36 --conv_prune_rate 0.15 --fc_prune_rate 0.20 --seed 2
+--arch Conv-6 --run_type winning_ticket --lr 3e-4 --epochs 36 --conv_prune_rate 0.15 --fc_prune_rate 0.20 --seed 3
+--arch Conv-6 --run_type winning_ticket --lr 3e-4 --epochs 36 --conv_prune_rate 0.15 --fc_prune_rate 0.20 --seed 4
+--arch Conv-6 --run_type winning_ticket --lr 3e-4 --epochs 36 --conv_prune_rate 0.15 --fc_prune_rate 0.20 --seed 5
+--arch Conv-6 --run_type random_reinit --lr 3e-4 --epochs 36 --conv_prune_rate 0.15 --fc_prune_rate 0.20 --seed 1
+--arch Conv-6 --run_type random_reinit --lr 3e-4 --epochs 36 --conv_prune_rate 0.15 --fc_prune_rate 0.20 --seed 2
+--arch Conv-6 --run_type random_reinit --lr 3e-4 --epochs 36 --conv_prune_rate 0.15 --fc_prune_rate 0.20 --seed 3
+--arch Conv-6 --run_type random_reinit --lr 3e-4 --epochs 36 --conv_prune_rate 0.15 --fc_prune_rate 0.20 --seed 4
+--arch Conv-6 --run_type random_reinit --lr 3e-4 --epochs 36 --conv_prune_rate 0.15 --fc_prune_rate 0.20 --seed 5
+
+# --- Dropout Experiments (Figure 6) ---
+
+# Conv-2 with Dropout (Seeds 1-5)
+--arch Conv-2 --run_type winning_ticket --lr 3e-4 --epochs 24 --conv_prune_rate 0.10 --fc_prune_rate 0.20 --dropout_rate 0.5 --seed 1
+--arch Conv-2 --run_type winning_ticket --lr 3e-4 --epochs 24 --conv_prune_rate 0.10 --fc_prune_rate 0.20 --dropout_rate 0.5 --seed 2
+--arch Conv-2 --run_type winning_ticket --lr 3e-4 --epochs 24 --conv_prune_rate 0.10 --fc_prune_rate 0.20 --dropout_rate 0.5 --seed 3
+--arch Conv-2 --run_type winning_ticket --lr 3e-4 --epochs 24 --conv_prune_rate 0.10 --fc_prune_rate 0.20 --dropout_rate 0.5 --seed 4
+--arch Conv-2 --run_type winning_ticket --lr 3e-4 --epochs 24 --conv_prune_rate 0.10 --fc_prune_rate 0.20 --dropout_rate 0.5 --seed 5
+--arch Conv-2 --run_type random_reinit --lr 3e-4 --epochs 24 --conv_prune_rate 0.10 --fc_prune_rate 0.20 --dropout_rate 0.5 --seed 1
+--arch Conv-2 --run_type random_reinit --lr 3e-4 --epochs 24 --conv_prune_rate 0.10 --fc_prune_rate 0.20 --dropout_rate 0.5 --seed 2
+--arch Conv-2 --run_type random_reinit --lr 3e-4 --epochs 24 --conv_prune_rate 0.10 --fc_prune_rate 0.20 --dropout_rate 0.5 --seed 3
+--arch Conv-2 --run_type random_reinit --lr 3e-4 --epochs 24 --conv_prune_rate 0.10 --fc_prune_rate 0.20 --dropout_rate 0.5 --seed 4
+--arch Conv-2 --run_type random_reinit --lr 3e-4 --epochs 24 --conv_prune_rate 0.10 --fc_prune_rate 0.20 --dropout_rate 0.5 --seed 5
+
+# Conv-4 with Dropout (Seeds 1-5)
+--arch Conv-4 --run_type winning_ticket --lr 2e-4 --epochs 30 --conv_prune_rate 0.10 --fc_prune_rate 0.20 --dropout_rate 0.5 --seed 1
+--arch Conv-4 --run_type winning_ticket --lr 2e-4 --epochs 30 --conv_prune_rate 0.10 --fc_prune_rate 0.20 --dropout_rate 0.5 --seed 2
+--arch Conv-4 --run_type winning_ticket --lr 2e-4 --epochs 30 --conv_prune_rate 0.10 --fc_prune_rate 0.20 --dropout_rate 0.5 --seed 3
+--arch Conv-4 --run_type winning_ticket --lr 2e-4 --epochs 30 --conv_prune_rate 0.10 --fc_prune_rate 0.20 --dropout_rate 0.5 --seed 4
+--arch Conv-4 --run_type winning_ticket --lr 2e-4 --epochs 30 --conv_prune_rate 0.10 --fc_prune_rate 0.20 --dropout_rate 0.5 --seed 5
+--arch Conv-4 --run_type random_reinit --lr 2e-4 --epochs 30 --conv_prune_rate 0.10 --fc_prune_rate 0.20 --dropout_rate 0.5 --seed 1
+--arch Conv-4 --run_type random_reinit --lr 2e-4 --epochs 30 --conv_prune_rate 0.10 --fc_prune_rate 0.20 --dropout_rate 0.5 --seed 2
+--arch Conv-4 --run_type random_reinit --lr 2e-4 --epochs 30 --conv_prune_rate 0.10 --fc_prune_rate 0.20 --dropout_rate 0.5 --seed 3
+--arch Conv-4 --run_type random_reinit --lr 2e-4 --epochs 30 --conv_prune_rate 0.10 --fc_prune_rate 0.20 --dropout_rate 0.5 --seed 4
+--arch Conv-4 --run_type random_reinit --lr 2e-4 --epochs 30 --conv_prune_rate 0.10 --fc_prune_rate 0.20 --dropout_rate 0.5 --seed 5
+
+# Conv-6 with Dropout (Seeds 1-5)
+--arch Conv-6 --run_type winning_ticket --lr 2e-4 --epochs 36 --conv_prune_rate 0.15 --fc_prune_rate 0.20 --dropout_rate 0.5 --seed 1
+--arch Conv-6 --run_type winning_ticket --lr 2e-4 --epochs 36 --conv_prune_rate 0.15 --fc_prune_rate 0.20 --dropout_rate 0.5 --seed 2
+--arch Conv-6 --run_type winning_ticket --lr 2e-4 --epochs 36 --conv_prune_rate 0.15 --fc_prune_rate 0.20 --dropout_rate 0.5 --seed 3
+--arch Conv-6 --run_type winning_ticket --lr 2e-4 --epochs 36 --conv_prune_rate 0.15 --fc_prune_rate 0.20 --dropout_rate 0.5 --seed 4
+--arch Conv-6 --run_type winning_ticket --lr 2e-4 --epochs 36 --conv_prune_rate 0.15 --fc_prune_rate 0.20 --dropout_rate 0.5 --seed 5
+--arch Conv-6 --run_type random_reinit --lr 2e-4 --epochs 36 --conv_prune_rate 0.15 --fc_prune_rate 0.20 --dropout_rate 0.5 --seed 1
+--arch Conv-6 --run_type random_reinit --lr 2e-4 --epochs 36 --conv_prune_rate 0.15 --fc_prune_rate 0.20 --dropout_rate 0.5 --seed 2
+--arch Conv-6 --run_type random_reinit --lr 2e-4 --epochs 36 --conv_prune_rate 0.15 --fc_prune_rate 0.20 --dropout_rate 0.5 --seed 3
+--arch Conv-6 --run_type random_reinit --lr 2e-4 --epochs 36 --conv_prune_rate 0.15 --fc_prune_rate 0.20 --dropout_rate 0.5 --seed 4
+--arch Conv-6 --run_type random_reinit --lr 2e-4 --epochs 36 --conv_prune_rate 0.15 --fc_prune_rate 0.20 --dropout_rate 0.5 --seed 5
