@@ -1,0 +1,11 @@
+#!/bin/bash
+#BSUB -J "check_python"
+#BSUB -q gpuv100
+#BSUB -gpu "num=1"
+#BSUB -n 1
+#BSUB -W 5
+#BSUB -R "rusage[mem=1GB]"
+#BSUB -o check_python.out
+#BSUB -e check_python.err
+
+module avail python
