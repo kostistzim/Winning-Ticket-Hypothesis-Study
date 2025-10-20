@@ -13,6 +13,7 @@ import torchvision.datasets as datasets
 import torchvision.transforms as transforms
 from tqdm import tqdm
 from vgg import VGG
+from carbontracker.tracker import CarbonTracker
 
 
 class AverageMeter(object):
@@ -39,47 +40,36 @@ def train(model:nn.Module, train_loader, criterion,optimiser,device,iteration,ar
 
     for batch_id,(inputs,targets) in enumerate(train_loader):
 
-        inputs.to(device)
-        targets.to(device)
+        inputs, targets = inputs.to(device), targets.to(device)
         outputs=model(inputs)
         loss=criterion(outputs,targets)
 
         optimiser.zero_grad()
         loss.backward()
         optimiser.step()
-        print("Srep: ",batch_id+1," Loss: ",loss.item())
+        # print("Srep: ",batch_id+1," Loss: ",loss.item())
         iteration+=1
         if iteration in [30000,90000]:
             save_checkpoint(model.state_dict(),iteration,args.lr,args.wd,args.seed)
 
     return iteration
 
-def accuracy(output, target, topk=(1,)):
-    """Computes the precision@k for the specified values of k. Imported from https://github.com/pytorch/metrics."""
-    maxk = max(topk)
-    batch_size = target.size(0)
-
-    _, pred = output.topk(maxk, 1, True, True)
-    pred = pred.t()
-    correct = pred.eq(target.view(1, -1).expand_as(pred))
-
-    res = []
-    for k in topk:
-        correct_k = correct[:k].view(-1).float().sum(0)
-        res.append(correct_k.mul_(100.0 / batch_size))
-    return res
-
 def test(testloader, model,device):
 
-    top1 = AverageMeter()
     model.eval()
+    accuracy=[]
+    model.eval()
+    top1=AverageMeter()
     for batch_idx, (inputs, targets) in enumerate(testloader):
 
         inputs, targets = inputs.to(device), targets.to(device)
         inputs, targets = torch.autograd.Variable(inputs, volatile=True), torch.autograd.Variable(targets)
         outputs = model(inputs)
-        prec1, prec5 = accuracy(outputs.data, targets.data, topk=(1, 5))
-        top1.update(prec1[0], inputs.size(0))
+        predictions=outputs.data.argmax(dim=1)
+        labels=targets.data
+        correct = (predictions == labels).sum().item()
+        accuracy=100.0 * correct / labels.size(0)
+        top1.update(accuracy, inputs.size(0))
     return top1.avg
 
 def save_checkpoint(state,iteration,lr,wd,seed,model_name='vgg'):
@@ -125,9 +115,16 @@ def main(args):
 
 
     epochs=args.epochs
+    tracker = CarbonTracker(epochs=epochs,
+                            log_dir='carbontracker/',
+                            log_file_prefix=F"vgg_seed={args.seed}_lr={args.lr}_wd={args.wd}")
     device=args.device
+
     if not os.path.exists('models/'):
         os.makedirs('models/')
+    if not os.path.exists('carbontracker/'):
+        os.makedirs('carbontracker/')
+    
     model=VGG()
     model.to(device)
     train_loader,test_loader=get_dataloaders(args)
@@ -136,16 +133,18 @@ def main(args):
     optimiser = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.wd)
     iteration=0
     lr=args.lr
-    for epoch in tqdm(epochs,desc="Training model"):
+    for epoch in tqdm(range(epochs),desc="Training model"):
+        tracker.epoch_start()
         adjust_learning_rate(optimiser, epoch,args,lr)
 
         iteration=train(model,train_loader,criterion,optimiser,device,iteration,args)
 
-        if (epoch+1)%10==0:
+        if (epoch+1)%40==0:
             test_acc=test(test_loader,model,device)
             print("Accuracy for epoch, ",epoch,' is ',test_acc)
+        tracker.epoch_end()
 
-
+    tracker.stop()
     save_checkpoint(model.state_dict(),iteration,args.lr,args.wd,args.seed)
 
 if __name__ == '__main__':

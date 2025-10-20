@@ -132,9 +132,9 @@ dmypy.json
 ***/data/
 
 models/
-
+carbontracker/
 .idea/
-
+run.py
 outputs/
 
 logs/
