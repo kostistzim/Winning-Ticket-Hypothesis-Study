@@ -132,6 +132,7 @@ dmypy.json
 ***/data/
 
 models/
+VGG/results/*
 carbontracker/
 .idea/
 run.py

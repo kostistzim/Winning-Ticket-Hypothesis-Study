@@ -1,10 +1,11 @@
 import random
 import torch
-from utils.eval import AverageMeter,test,get_dataloaders
-from utils.prunning import make_mask,apply_mask,global_pruning_by_percentage,global_pruning_by_percentage_random
+from eval import AverageMeter,test,get_dataloaders
+from prunning import make_mask,apply_mask,global_pruning_by_percentage,global_pruning_by_percentage_random
 from vgg import VGG
 import torchvision.datasets as datasets
 import argparse
+from tqdm import tqdm
 
 def main(args):
 
@@ -19,25 +20,35 @@ def main(args):
     masksused=[]
 
     _,testloader=get_dataloaders(args)
+    remaining_weights=100
+    pruning_percentage=20
 
-    for _ in range(0,30):
+    for iterative_pruning_step in tqdm(range(0,30)):
+        remaining_weights*=(1-pruning_percentage / 100)
+        print(remaining_weights)
         model.load_state_dict(model_weights)
         masksused.append(current_mask)
         apply_mask(model,current_mask)
         acc=test(testloader,model,args.device)
         if args.prunning=='global':
-            current_mask=global_pruning_by_percentage(model,20,current_mask)
+            current_mask=global_pruning_by_percentage(model,100-remaining_weights,current_mask)
         elif args.prunning=='random':
-            current_mask=global_pruning_by_percentage_random(model,20,current_mask)
+            current_mask=global_pruning_by_percentage_random(model,100-remaining_weights,current_mask)
 
+        print('Accuracy is ',acc)
         trial_accs.append(acc)
-    save_path=f'VGG/{args.prunning}_results_seed={args.seed}_iter={args.iteration}_lr={args.lr}_wd={args.wd}.pth'
-    torch.save({'masksused':masksused,'trial_accs':trial_accs},save_path)
+    mask_save_path=f'VGG/results/mask/{args.prunning}_results_seed={args.seed}_iter={args.iteration}_lr={args.lr}_wd={args.wd}.pth'
+    accuracy_save_path=f'VGG/results/accuracy/{args.prunning}_results_seed={args.seed}_iter={args.iteration}_lr={args.lr}_wd={args.wd}.pth'
+    
+    torch.save(masksused,mask_save_path)
+    torch.save(trial_accs,accuracy_save_path)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='PyTorch CIFAR10/100 Training')
     parser.add_argument('--prunning', default='global', type=str,
                         help='how to prune',choices=['global','random'])
+    parser.add_argument('--model_name', default='vgg', type=str,
+                        help='Model name')
     parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                         help='momentum')
     parser.add_argument('--iteration', type=int,
