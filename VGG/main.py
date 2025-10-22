@@ -1,47 +1,63 @@
 import random
 import torch
+import torch.nn as nn
+import torch.optim as optim
 from eval import AverageMeter,test,get_dataloaders
-from prunning import make_mask,apply_mask,global_pruning_by_percentage,global_pruning_by_percentage_random
+from train import train
+from prunning import make_mask,apply_mask,global_pruning_by_percentage,global_pruning_by_percentage_random,get_sparsity
 from vgg import VGG
 import torchvision.datasets as datasets
 import argparse
 from tqdm import tqdm
+import pandas as pd
 
 def main(args):
 
     random.seed(args.seed)
     torch.manual_seed(args.seed)
     model =VGG().to(args.device)
-    model_path=f'models/{args.model_name}_seed={args.seed}_iter={args.iteration}_lr={args.lr}_wd={args.wd}.pth'
-    model_weights=torch.load(model_path)
+    if args.higher_model:
+        model_path=f'models/{args.model_name}_seed={args.seed}_iter={args.iteration}_lr={args.lr}_wd={args.wd}.pth'
+        initial_weights=torch.load(model_path)
+    else:
+        initial_weights=model.state_dict()
 
     current_mask=make_mask(model)
-    trial_accs=[]
+    results_log = []
     masksused=[]
 
-    _,testloader=get_dataloaders(args)
-    remaining_weights=100
-    pruning_percentage=20
+    trainloader,testloader=get_dataloaders(args)
 
-    for iterative_pruning_step in tqdm(range(0,30)):
-        remaining_weights*=(1-pruning_percentage / 100)
-        print(remaining_weights)
-        model.load_state_dict(model_weights)
+    for i in tqdm(range(args.prune_iterations)):
+        model.load_state_dict(initial_weights)
+        sparsity, remaining_pct = get_sparsity(current_mask)
+        print(f"Sparsity: {sparsity:.2f}% | Weights Remaining: {remaining_pct:.2f}%")
+        criterion = nn.CrossEntropyLoss()
+        optimiser = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.wd)
+        for _epoch in range(10):
+            _=train(model,trainloader,criterion,optimiser,args.device,0,args,mask=current_mask)
         masksused.append(current_mask)
-        apply_mask(model,current_mask)
         acc=test(testloader,model,args.device)
+        results_log.appen({
+            'pruning_iteration':i,
+            'sparcity_pct':sparsity,
+            'weight_remaining_pct':remaining_pct,
+            'acc':acc
+        })
         if args.prunning=='global':
-            current_mask=global_pruning_by_percentage(model,100-remaining_weights,current_mask)
+            current_mask=global_pruning_by_percentage(model,20,current_mask)
         elif args.prunning=='random':
-            current_mask=global_pruning_by_percentage_random(model,100-remaining_weights,current_mask)
+            current_mask=global_pruning_by_percentage_random(model,20,current_mask)
+        apply_mask(model,current_mask)
+    if args.higher_model:
+        accuracy_save_path=f'VGG/results/accuracy/{args.prunning}_results_seed={args.seed}_iter={args.iteration}_lr={args.lr}_wd={args.wd}.csv'
+    else:
+        accuracy_save_path=f'VGG/results/accuracy/{args.prunning}_results_seed={args.seed}_lr={args.lr}_wd={args.wd}.csv'
+        mask_save_path=f'VGG/results/accuracy/{args.prunning}_results_seed={args.seed}_lr={args.lr}_wd={args.wd}.pth'
+        torch.save(masksused,mask_save_path)
+    df=pd.DataFrame(results_log)
+    df.to_csv(accuracy_save_path,index=False)
 
-        print('Accuracy is ',acc)
-        trial_accs.append(acc)
-    mask_save_path=f'VGG/results/mask/{args.prunning}_results_seed={args.seed}_iter={args.iteration}_lr={args.lr}_wd={args.wd}.pth'
-    accuracy_save_path=f'VGG/results/accuracy/{args.prunning}_results_seed={args.seed}_iter={args.iteration}_lr={args.lr}_wd={args.wd}.pth'
-    
-    torch.save(masksused,mask_save_path)
-    torch.save(trial_accs,accuracy_save_path)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='PyTorch CIFAR10/100 Training')
@@ -59,6 +75,8 @@ if __name__ == '__main__':
                         help='number of data loading workers (default: 4)')
     parser.add_argument('--epochs', default=160, type=int, metavar='N',
                         help='number of total epochs to run')
+    parser.add_argument('--prune_iterations', default=30, type=int, metavar='N',
+                        help='number of pruneing_steps to run')
     parser.add_argument('--bs', default=64, type=int, metavar='N',
                         help='train and testing batchsize')
     parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,

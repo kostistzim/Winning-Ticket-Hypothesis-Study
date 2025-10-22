@@ -14,8 +14,13 @@ from vgg import VGG
 
 from utils.eval import AverageMeter,test,get_dataloaders
 
+def apply_mask_to_gradients(model, mask):
+    """Applies a mask to the model's gradients during training."""
+    for name, param in model.named_parameters():
+        if 'weight' in name and name in mask and param.grad is not None:
+            param.grad.data *= mask[name]
 
-def train(model:nn.Module, train_loader, criterion,optimiser,device,iteration,args):
+def train(model:nn.Module, train_loader, criterion,optimiser,device,iteration,args,mask:None):
     """Traing vgg on cifar."""
 
     model.train()
@@ -28,6 +33,8 @@ def train(model:nn.Module, train_loader, criterion,optimiser,device,iteration,ar
 
         optimiser.zero_grad()
         loss.backward()
+        if mask!=None:
+            apply_mask_to_gradients(model,mask)
         optimiser.step()
         # print("Srep: ",batch_id+1," Loss: ",loss.item())
         iteration+=1

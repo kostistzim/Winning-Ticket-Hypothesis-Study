@@ -6,11 +6,30 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+def compute_global_sparsity(model)->float:
+    """Computes sparcity"""
+    total, zeros = 0, 0
+    for name, para in model.named_parameters():
+        if 'weight' in name:
+            w = para.weight.data
+            total += w.numel()
+            zeros += (w == 0).sum().item()
+    return zeros / total
 
 def make_mask(model:nn.Module)->dict:
     """Return initail masking for us."""
     current_mask={name:torch.ones_like(para) for name,para in model.state_dict().items() if 'weight' in name}
     return current_mask
+
+def get_sparsity(mask):
+    """Calculates the total sparsity of the network from a mask."""
+    total_params, remaining_params = 0, 0
+    for name in mask:
+        total_params += mask[name].numel()
+        remaining_params += torch.sum(mask[name]).item()
+    sparsity = 100. * (1 - (remaining_params / total_params))
+    remaining_percentage = 100. * (remaining_params / total_params)
+    return sparsity, remaining_percentage
 
 def apply_mask(model:nn.Module,mask:dict)->None:
     """Masks weights based on the mask dictionary."""
