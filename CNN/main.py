@@ -134,7 +134,11 @@ def main():
     
     results_df = pd.DataFrame(results_log)
     # Include the seed in the output filename to avoid overwriting results
-    output_filename = os.path.join(args.output_dir, f'results_{args.arch}_{args.run_type}_seed{args.seed}.csv')
+    # Format dropout rate for filename (e.g., 0.5 -> d0p5, 0.0 -> d0p0)
+    dropout_str = f"d{str(args.dropout_rate).replace('.', 'p')}"
+
+# Define the output filename including the dropout string
+    output_filename = os.path.join(args.output_dir, f'results_{args.arch}_{args.run_type}_{dropout_str}_seed{args.seed}.csv')
     results_df.to_csv(output_filename, index=False)
     print(f"Results saved to {output_filename}")
 
