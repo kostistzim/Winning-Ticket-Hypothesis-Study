@@ -1,0 +1,10 @@
+--mode iterative --random_reinit --trial 0
+--mode iterative --random_reinit --trial 1
+--mode iterative --random_reinit --trial 2
+--mode iterative --random_reinit --trial 3
+--mode iterative --random_reinit --trial 4
+--mode oneshot --random_reinit --trial 0
+--mode oneshot --random_reinit --trial 1
+--mode oneshot --random_reinit --trial 2
+--mode oneshot --random_reinit --trial 3
+--mode oneshot --random_reinit --trial 4
