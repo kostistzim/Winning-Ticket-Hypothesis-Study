@@ -38,20 +38,28 @@ def apply_mask(model:nn.Module,mask:dict)->None:
             if name in mask:
                 para.mul_(mask[name])
 
-def global_pruning_by_percentage(model:nn.Module,percentage:int=20,current_mask:bool=False)->dict:
+def global_pruning_by_percentage(model:nn.Module,prune_fraction:float=0.2,current_mask:bool=False)->dict:
     """Applies pruning for VGG or ResNet.Specifically, If prunes the p lowest magnitude weights in the entire network."""
-    current_weights=[]
-    for name,param in model.named_parameters():
-        if 'weight' in name:
-            masked=param if current_mask is None else param*current_mask.get(name,1)
-            current_weights += list(masked.abs().flatten().cpu().detach().numpy())
-
-    threshold = np.percentile(current_weights, percentage)
+    all_unpruned_weights = []
+    for name, param in model.named_parameters():
+        if name in current_mask:
+            mask = current_mask[name]
+            unpruned = param.data[mask.bool()].abs().flatten()
+            all_unpruned_weights.append(unpruned)
+    
+    all_unpruned_weights = torch.cat(all_unpruned_weights)
+    k = int(prune_fraction * all_unpruned_weights.numel())
+    if k == 0:
+        return current_mask
+    
+    threshold = torch.topk(all_unpruned_weights, k, largest=False).values.max()
     new_mask = {}
     for name, param in model.named_parameters():
-        if 'weight' in name:
-            masked = param if current_mask is None else param * current_mask.get(name, 1)
-            new_mask[name] = (masked.abs() > threshold).float()
+        if name in current_mask:
+            mask = current_mask[name]
+            weight = param.data.abs()
+            new_mask[name] = mask * (weight > threshold)
+    
     return new_mask
 
 def global_pruning_by_percentage_random(model:nn.Module,percentage:int=20,current_mask:bool=False)->dict:

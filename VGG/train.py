@@ -12,7 +12,7 @@ from carbontracker.tracker import CarbonTracker
 from tqdm import tqdm
 from vgg import VGG
 
-from utils.eval import AverageMeter,test,get_dataloaders
+from eval import AverageMeter,test,get_dataloaders
 
 def apply_mask_to_gradients(model, mask):
     """Applies a mask to the model's gradients during training."""
