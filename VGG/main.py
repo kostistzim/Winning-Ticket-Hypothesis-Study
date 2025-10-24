@@ -22,7 +22,6 @@ def random_reinitialize(model, mask, init_fn):
                 else:
                     init_fn(new_param)
                 param.data = new_param * mask[name]
-    
     return model
 
 def main(args):
@@ -46,11 +45,10 @@ def main(args):
     trainloader,testloader=get_dataloaders(args)
 
     for i in tqdm(range(args.prune_iterations)):
-        
         # tracker.epoch_start()
 
         if args.prunning=='random':
-            model=random_reinitialize(model,current_mask,init_fn=nn.init.kaiming_uniform_)
+            model=model._initialize_weights()
         else:
             model.load_state_dict(initial_weights)
         sparsity, remaining_pct = get_sparsity(current_mask)
