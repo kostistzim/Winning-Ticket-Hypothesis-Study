@@ -126,6 +126,7 @@ exclude = [
     "data/**",
     "notebooks/**",
     "medic_reasoning/utils/probing.py",
+    "BERT/*"
 ]
 
 [tool.pyright]
