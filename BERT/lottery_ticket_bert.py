@@ -1,39 +1,30 @@
 #!/usr/bin/env python3
 # ==========================================
 #  LOTTERY TICKET HYPOTHESIS FOR BERT
-#  Clean executable Python version
-#  Works locally (Mac/Windows/Linux)
+#  Corrected version with proper pruning
 # ==========================================
 
 import os
 import json
-import copy
+import argparse
 import torch
 import torch.nn as nn
+import torch.nn.utils.prune as prune
 from torch.utils.data import DataLoader
 import numpy as np
 import matplotlib.pyplot as plt
 from tqdm.auto import tqdm
 from transformers import (
     AutoTokenizer,
-    AutoModelForSequenceClassification,
+    AutoModel,
     get_linear_schedule_with_warmup,
 )
 from datasets import load_dataset
 
-# Optional: Disable CarbonTracker on unsupported systems
-try:
-    from carbontracker.tracker import CarbonTracker
-    tracker_available = True
-except Exception:
-    print("⚠️ CarbonTracker not available; will skip energy tracking.")
-    tracker_available = False
-
-
 # ==========================================
 #  GLOBAL SETTINGS
 # ==========================================
-save_dir = "./lottery_ticket_models"
+save_dir = "./models"
 os.makedirs(save_dir, exist_ok=True)
 print(f"Models will be saved to: {save_dir}")
 
@@ -61,15 +52,7 @@ class DatasetProcessor:
             truncation=True,
             padding="max_length",
             max_length=self.max_length,
-        )
-
-    def process_wnli(self, examples):
-        return self.tokenizer(
-            examples["sentence1"],
-            examples["sentence2"],
-            truncation=True,
-            padding="max_length",
-            max_length=self.max_length,
+            return_token_type_ids=True,  # Important for sentence pairs
         )
 
 
@@ -87,11 +70,6 @@ def load_and_process_datasets(task_name, tokenizer, batch_size=32, subset_size=1
         process_fn = processor.process_qqp
         num_labels = 2
         label_col = "label"
-    elif task_name == "wnli":
-        dataset = load_dataset("glue", "wnli")
-        process_fn = processor.process_wnli
-        num_labels = 2
-        label_col = "label"
     else:
         raise ValueError(f"Unknown task: {task_name}")
 
@@ -107,11 +85,15 @@ def load_and_process_datasets(task_name, tokenizer, batch_size=32, subset_size=1
     tokenized_val = val_dataset.map(tokenize_function, batched=True, remove_columns=val_dataset.column_names)
 
     def collate_fn(batch):
-        return {
+        batch_dict = {
             "input_ids": torch.tensor([item["input_ids"] for item in batch], dtype=torch.long),
             "attention_mask": torch.tensor([item["attention_mask"] for item in batch], dtype=torch.long),
             "labels": torch.tensor([item["labels"] for item in batch], dtype=torch.long),
         }
+        # Add token_type_ids if present (for QQP)
+        if "token_type_ids" in batch[0]:
+            batch_dict["token_type_ids"] = torch.tensor([item["token_type_ids"] for item in batch], dtype=torch.long)
+        return batch_dict
 
     train_loader = DataLoader(tokenized_train, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
     val_loader = DataLoader(tokenized_val, batch_size=batch_size, collate_fn=collate_fn)
@@ -119,241 +101,285 @@ def load_and_process_datasets(task_name, tokenizer, batch_size=32, subset_size=1
 
 
 # ==========================================
-#  MODEL CLASSES
+#  MODEL DEFINITIONS
 # ==========================================
-class LotteryTicketBERT(nn.Module):
-    """BERT model with lottery ticket masking"""
+class BertForCustomTask(nn.Module):
+    """Custom BERT model with classification head"""
 
     def __init__(self, model_name="bert-base-uncased", num_labels=2):
         super().__init__()
-        self.model = AutoModelForSequenceClassification.from_pretrained(model_name, num_labels=num_labels)
-        self.masks = {}
-        self.init_weights = {}
-        self._store_init_weights()
+        self.bert = AutoModel.from_pretrained(model_name)
+        hidden_size = self.bert.config.hidden_size
+        self.classifier = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_size, num_labels),
+        )
 
-    def _store_init_weights(self):
-        for name, param in self.model.named_parameters():
-            self.init_weights[name] = param.data.clone()
+    def forward(self, input_ids, attention_mask=None, token_type_ids=None, labels=None):
+        outputs = self.bert(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            token_type_ids=token_type_ids
+        )
+        cls_output = outputs.last_hidden_state[:, 0, :]
+        logits = self.classifier(cls_output)
+        loss = None
+        if labels is not None:
+            loss = nn.CrossEntropyLoss()(logits, labels)
+        return {"loss": loss, "logits": logits}
+
+
+class LotteryTicketBERT(nn.Module):
+    """BERT model with lottery ticket pruning and rewinding"""
+
+    def __init__(self, model_name="bert-base-uncased", num_labels=2):
+        super().__init__()
+        self.model = BertForCustomTask(model_name, num_labels)
+        # Store initial weights - will be updated after warmup training
+        self.init_weights = None
+
+    def save_initial_weights(self):
+        """Save weights after initial training (winning ticket initialization)"""
+        self.init_weights = {n: p.clone().detach() for n, p in self.model.named_parameters() if p.requires_grad}
 
     def rewind_weights(self):
+        """Rewind to initial weights while keeping pruning masks"""
+        if self.init_weights is None:
+            raise ValueError("Must call save_initial_weights() before rewinding")
+
         with torch.no_grad():
             for name, param in self.model.named_parameters():
                 if name in self.init_weights:
-                    if name in self.masks:
-                        param.data.copy_(self.init_weights[name].to(param.device) * self.masks[name])
+                    # If parameter has a mask, apply it to the rewound weights
+                    if hasattr(param, '_forward_pre_hooks') and len(param._forward_pre_hooks) > 0:
+                        # Module has pruning applied, so we just copy the data
+                        param.data.copy_(self.init_weights[name])
                     else:
-                        param.data.copy_(self.init_weights[name].to(param.device))
-
-    def compute_mask_statistics(self):
-        total_params = sum(mask.numel() for mask in self.masks.values())
-        pruned_params = sum((mask == 0).sum().item() for mask in self.masks.values())
-        sparsity = pruned_params / total_params if total_params > 0 else 0
-        return {"sparsity": sparsity, "total_params": total_params, "remaining_params": total_params - pruned_params}
-
-    def apply_masks(self):
-        with torch.no_grad():
-            for name, param in self.model.named_parameters():
-                if name in self.masks:
-                    param.data *= self.masks[name].to(param.device)
+                        param.copy_(self.init_weights[name])
 
     def forward(self, **kwargs):
         return self.model(**kwargs)
 
-    def to(self, device):
-        super().to(device)
-        self.masks = {k: v.to(device) for k, v in self.masks.items()}
-        self.init_weights = {k: v.to(device) for k, v in self.init_weights.items()}
-        return self
 
-
+# ==========================================
+#  PRUNING WRAPPER (CORRECTED)
+# ==========================================
 class IterativeMagnitudePruning:
-    """Implements Iterative Magnitude Pruning"""
+    """Iterative Magnitude Pruning using torch.nn.utils.prune"""
 
     def __init__(self, model, pruning_rate=0.2):
         self.model = model
         self.pruning_rate = pruning_rate
+        self.current_sparsity = 0.0
+        self.pruned_modules = []  # Track pruned modules
 
-    def global_magnitude_pruning(self, target_sparsity):
-        all_weights = []
-        weight_names = []
+    def apply_pruning(self):
+        """Apply global magnitude pruning across all eligible parameters"""
+        print(f"Applying global pruning (target sparsity increment: {self.pruning_rate * 100:.1f}%)")
 
-        for name, param in self.model.model.named_parameters():
-            if "weight" in name and "LayerNorm" not in name:
-                if name not in self.model.masks:
-                    self.model.masks[name] = torch.ones_like(param.data)
-                masked_weights = param.data * self.model.masks[name]
-                all_weights.append(masked_weights.abs().flatten())
-                weight_names.append(name)
+        # Collect all parameters to prune (only once if first iteration)
+        if not self.pruned_modules:
+            for module_name, module in self.model.model.named_modules():
+                if hasattr(module, "weight") and isinstance(module.weight, torch.Tensor):
+                    # Exclude LayerNorm and embedding layers
+                    if "LayerNorm" not in module_name and "embeddings" not in module_name:
+                        self.pruned_modules.append((module, "weight"))
 
-        if not all_weights:
-            return
+        # Calculate new target sparsity
+        current_sparsity = self.compute_sparsity()
+        new_target_sparsity = min(current_sparsity + self.pruning_rate, 0.99)
 
-        all_weights_tensor = torch.cat(all_weights)
-        k = int(all_weights_tensor.numel() * target_sparsity)
-        if k <= 0:
-            return
+        # Apply global unstructured pruning
+        # Note: amount is relative to unpruned weights
+        if current_sparsity < new_target_sparsity:
+            # Calculate the fraction of remaining weights to prune
+            remaining_weights = 1.0 - current_sparsity
+            fraction_to_prune = (new_target_sparsity - current_sparsity) / remaining_weights
 
-        threshold = torch.topk(all_weights_tensor, k, largest=False).values.max()
+            prune.global_unstructured(
+                self.pruned_modules,
+                pruning_method=prune.L1Unstructured,
+                amount=fraction_to_prune,
+            )
 
-        for name, param in self.model.model.named_parameters():
-            if name in weight_names:
-                weight_magnitude = param.data.abs()
-                new_mask = (weight_magnitude > threshold)
-                self.model.masks[name] &= new_mask
+        # DO NOT call prune.remove() here - we want to keep the masks!
+        # The masks will accumulate across iterations
 
-    def iterative_pruning_step(self, current_sparsity, target_sparsity):
-        next_sparsity = min(current_sparsity + self.pruning_rate * (1 - current_sparsity), target_sparsity)
-        self.global_magnitude_pruning(next_sparsity)
-        return next_sparsity
+    def make_pruning_permanent(self):
+        """Remove pruning reparameterization (call only at the very end)"""
+        for module, name in self.pruned_modules:
+            if prune.is_pruned(module):
+                prune.remove(module, name)
+
+    def compute_sparsity(self):
+        """Compute current sparsity across all pruned parameters"""
+        total, zeros = 0, 0
+        for module, param_name in self.pruned_modules:
+            param = getattr(module, param_name)
+            if param is not None:
+                total += param.numel()
+                zeros += (param == 0).sum().item()
+
+        if total > 0:
+            self.current_sparsity = zeros / total
+        return self.current_sparsity
 
 
 # ==========================================
-#  TRAINING + EVALUATION
+#  TRAINING & EVALUATION
 # ==========================================
-def train_epoch(model, train_loader, optimizer, scheduler, device):
+def train_epoch(model, loader, optimizer, scheduler, device):
     model.train()
     total_loss, correct, total = 0, 0, 0
 
-    for batch in tqdm(train_loader, desc="Training"):
-        batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
-
+    for batch in tqdm(loader, desc="Training", leave=False):
+        batch = {k: v.to(device) for k, v in batch.items()}
         outputs = model(**batch)
-        loss = outputs.loss
+        loss = outputs["loss"]
         optimizer.zero_grad()
         loss.backward()
-
-        with torch.no_grad():
-            for name, param in model.model.named_parameters():
-                if name in model.masks and param.grad is not None:
-                    param.grad *= model.masks[name]
-
         optimizer.step()
         scheduler.step()
 
         total_loss += loss.item()
-        predictions = outputs.logits.argmax(dim=-1)
-        correct += (predictions == batch["labels"]).sum().item()
+        preds = outputs["logits"].argmax(dim=-1)
+        correct += (preds == batch["labels"]).sum().item()
         total += batch["labels"].size(0)
 
-    return total_loss / len(train_loader), correct / total
+    return total_loss / len(loader), correct / total
 
 
 @torch.no_grad()
-def evaluate(model, data_loader, device):
+def evaluate(model, loader, device):
     model.eval()
     correct, total = 0, 0
-    for batch in data_loader:
-        batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
+    for batch in loader:
+        batch = {k: v.to(device) for k, v in batch.items()}
         outputs = model(**batch)
-        predictions = outputs.logits.argmax(dim=-1)
-        correct += (predictions == batch["labels"]).sum().item()
+        preds = outputs["logits"].argmax(dim=-1)
+        correct += (preds == batch["labels"]).sum().item()
         total += batch["labels"].size(0)
     return correct / total
 
 
 # ==========================================
-#  MAIN LOTTERY TICKET TRAINING LOOP
+#  MAIN LOOP WITH ITERATIVE PRUNING
 # ==========================================
 def lottery_ticket_training(
-    task_name="sst2",
-    model_name="bert-base-uncased",
-    target_sparsity=0.9,
-    pruning_rate=0.2,
-    epochs_per_round=3,
-    batch_size=16,
-    learning_rate=2e-5,
-    subset_size=1000,
+        task_name="sst2",
+        model_name="bert-base-uncased",
+        target_sparsity=0.9,
+        pruning_rate=0.2,
+        warmup_epochs=1,
+        epochs_per_round=2,
+        batch_size=16,
+        learning_rate=2e-5,
+        subset_size=1000,
 ):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
-
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     train_loader, val_loader, num_labels = load_and_process_datasets(task_name, tokenizer, batch_size, subset_size)
 
     model = LotteryTicketBERT(model_name, num_labels).to(device)
+
+    # STEP 1: Warmup training to get initial weights
+    print(f"\n{'=' * 60}")
+    print(f"WARMUP TRAINING ({warmup_epochs} epochs)")
+    print(f"{'=' * 60}")
+
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+    total_steps = len(train_loader) * warmup_epochs
+    scheduler = get_linear_schedule_with_warmup(
+        optimizer, num_warmup_steps=total_steps // 10, num_training_steps=total_steps
+    )
+
+    for epoch in range(warmup_epochs):
+        train_loss, train_acc = train_epoch(model, train_loader, optimizer, scheduler, device)
+        val_acc = evaluate(model, val_loader, device)
+        print(f"Warmup Epoch {epoch + 1}/{warmup_epochs} | Train: {train_acc:.2%} | Val: {val_acc:.2%}")
+
+    # Save these weights as the "winning ticket initialization"
+    model.save_initial_weights()
+    print("✓ Initial weights saved after warmup\n")
+
+    # STEP 2: Iterative Magnitude Pruning
     pruner = IterativeMagnitudePruning(model, pruning_rate)
-
-    history = {"sparsity": [], "train_acc": [], "val_acc": []}
-    current_sparsity, iteration = 0.0, 0
-
-    tracker = None
-    if tracker_available:
-        try:
-            tracker = CarbonTracker(epochs=-1, components="cpu", ignore_warnings=True)
-        except Exception as e:
-            print(f"⚠️ CarbonTracker disabled: {e}")
-            tracker = None
-
-    print(f"\n{'='*50}\nStarting IMP for {task_name}\nTarget sparsity: {target_sparsity}\n{'='*50}")
+    history = {"sparsity": [0.0], "train_acc": [train_acc], "val_acc": [val_acc]}
+    current_sparsity = 0.0
+    iteration = 0
 
     while current_sparsity < target_sparsity:
         iteration += 1
-        print(f"\n--- Iteration {iteration} ---\nCurrent sparsity: {current_sparsity:.2%}")
-        model.rewind_weights()
-        model.apply_masks()
+        print(f"\n{'=' * 60}")
+        print(f"PRUNING ITERATION {iteration} | Current sparsity: {current_sparsity:.2%}")
+        print(f"{'=' * 60}")
 
+        # Prune the network
+        pruner.apply_pruning()
+        current_sparsity = pruner.compute_sparsity()
+        print(f"New sparsity after pruning: {current_sparsity:.2%}")
+
+        # Rewind weights to initial values (keeping masks)
+        model.rewind_weights()
+        print("✓ Weights rewound to initialization")
+
+        # Train the pruned network
         optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
         total_steps = len(train_loader) * epochs_per_round
         scheduler = get_linear_schedule_with_warmup(
-            optimizer,
-            num_warmup_steps=total_steps // 10,
-            num_training_steps=total_steps,
+            optimizer, num_warmup_steps=total_steps // 10, num_training_steps=total_steps
         )
 
         for epoch in range(epochs_per_round):
-            if tracker:
-                tracker.epoch_start()
             train_loss, train_acc = train_epoch(model, train_loader, optimizer, scheduler, device)
             val_acc = evaluate(model, val_loader, device)
-            if tracker:
-                tracker.epoch_end()
-            print(f"Epoch {epoch+1}/{epochs_per_round} | Train Acc: {train_acc:.2%} | Val Acc: {val_acc:.2%}")
+            print(f"Epoch {epoch + 1}/{epochs_per_round} | Train: {train_acc:.2%} | Val: {val_acc:.2%}")
 
         history["sparsity"].append(current_sparsity)
         history["train_acc"].append(train_acc)
         history["val_acc"].append(val_acc)
 
-        if current_sparsity < target_sparsity:
-            current_sparsity = pruner.iterative_pruning_step(current_sparsity, target_sparsity)
-            stats = model.compute_mask_statistics()
-            print(f"After pruning - Sparsity: {stats['sparsity']:.2%}")
+        # Check if we've reached target
+        if current_sparsity >= target_sparsity:
+            break
 
-    if tracker:
-        tracker.stop()
+    print(f"\n{'=' * 60}")
+    print(f"✅ IMP COMPLETE | Final sparsity: {current_sparsity:.2%}")
+    print(f"{'=' * 60}\n")
 
-    print(f"\n{'='*50}\nIMP Complete!\nFinal sparsity: {model.compute_mask_statistics()['sparsity']:.2%}")
-    print(f"Final validation accuracy: {val_acc:.2%}\n{'='*50}")
+    # Make pruning permanent at the end
+    pruner.make_pruning_permanent()
+
     return model, history
 
 
 # ==========================================
-#  SAVE & LOAD UTILITIES
+#  SAVE UTILITIES
 # ==========================================
 def save_model_local(model, task_name, sparsity, history=None):
-    filename = f"lottery_ticket_{task_name}_sparsity{int(sparsity*100)}.pt"
+    filename = f"lottery_ticket_{task_name}_sparsity{int(sparsity * 100)}.pt"
     filepath = os.path.join(save_dir, filename)
 
     checkpoint = {
-        "model_state_dict": model.model.state_dict(),
-        "masks": model.masks,
-        "init_weights": model.init_weights,
-        "sparsity_stats": model.compute_mask_statistics(),
-        "task_name": task_name,
-        "target_sparsity": sparsity,
+        "model_state_dict": model.state_dict(),
+        "sparsity": sparsity,
         "history": history or {},
     }
-
     torch.save(checkpoint, filepath)
-    print(f"Model saved: {filepath}")
+    print(f"Model saved to {filepath}")
 
-    summary_path = filepath.replace(".pt", "_summary.json")
-    with open(summary_path, "w") as f:
-        json.dump(
-            {"task_name": task_name, "sparsity": sparsity, "stats": checkpoint["sparsity_stats"], "history": history},
-            f,
-            indent=2,
-        )
-    print(f"Summary saved to: {summary_path}")
+    # Save JSON summary (without tensors)
+    json_path = filepath.replace(".pt", "_summary.json")
+    json_summary = {
+        "task": task_name,
+        "sparsity": sparsity,
+        "history": history or {},
+    }
+    with open(json_path, "w") as f:
+        json.dump(json_summary, f, indent=2)
+    print(f"Summary saved to {json_path}")
     return filepath
 
 
@@ -361,30 +387,47 @@ def save_model_local(model, task_name, sparsity, history=None):
 #  MAIN EXECUTION ENTRY POINT
 # ==========================================
 if __name__ == "__main__":
-    task = "sst2"
-    sparsity = 0.7
-    print(f"\n{'='*60}\nRunning experiment: {task} with target sparsity {sparsity}\n{'='*60}\n")
+    parser = argparse.ArgumentParser(description="Run Lottery Ticket Hypothesis with torch pruning on BERT.")
+    parser.add_argument("--task", type=str, default="sst2", choices=["sst2", "qqp"], help="Task to train on.")
+    parser.add_argument("--sparsity", type=float, default=0.6, help="Target sparsity (0–1). Paper: SST-2=60%, QQP=90%")
+    parser.add_argument("--warmup", type=int, default=1, help="Warmup epochs before pruning.")
+    parser.add_argument("--epochs", type=int, default=3,
+                        help="Epochs per pruning round. Paper: 3 for both SST-2 and QQP")
+    parser.add_argument("--subset", type=int, default=None, help="Subset size for quick testing. Paper: full dataset")
+    parser.add_argument("--batch_size", type=int, default=32, help="Batch size. Paper: 32 for both tasks")
+    parser.add_argument("--lr", type=float, default=2e-5, help="Learning rate. Paper: 2e-5 for both tasks")
+    args = parser.parse_args()
+
+    print(f"\n{'=' * 60}")
+    print(f"Running {args.task.upper()} with target sparsity {args.sparsity}")
+    print(f"{'=' * 60}\n")
+
+    # Use full dataset if subset not specified
+    subset_size = args.subset if args.subset else (67360 if args.task == "sst2" else 363872)
 
     model, history = lottery_ticket_training(
-        task_name=task,
-        target_sparsity=sparsity,
-        epochs_per_round=2,  # short demo
-        subset_size=500,
-        batch_size=16,
+        task_name=args.task,
+        target_sparsity=args.sparsity,
+        warmup_epochs=args.warmup,
+        epochs_per_round=args.epochs,
+        batch_size=args.batch_size,
+        learning_rate=args.lr,
+        subset_size=subset_size,
     )
 
-    save_model_local(model, task, sparsity, history)
+    save_model_local(model, args.task, history["sparsity"][-1], history)
 
     # Plot results
-    plt.figure(figsize=(6, 4))
-    plt.plot(history["sparsity"], history["val_acc"], marker="o", label="Validation")
-    plt.plot(history["sparsity"], history["train_acc"], marker="s", label="Training")
-    plt.xlabel("Sparsity")
-    plt.ylabel("Accuracy")
-    plt.title("BERT Lottery Ticket: Accuracy vs Sparsity")
-    plt.legend()
+    plt.figure(figsize=(10, 6))
+    plt.plot(history["sparsity"], history["val_acc"], marker="o", linewidth=2, markersize=8, label="Validation")
+    plt.plot(history["sparsity"], history["train_acc"], marker="s", linewidth=2, markersize=8, label="Training")
+    plt.xlabel("Sparsity", fontsize=12)
+    plt.ylabel("Accuracy", fontsize=12)
+    plt.title(f"BERT Lottery Ticket Hypothesis ({args.task.upper()})", fontsize=14)
+    plt.legend(fontsize=11)
     plt.grid(True, alpha=0.3)
-    plot_path = os.path.join(save_dir, f"results_plot_{task}_sparsity{int(sparsity*100)}.png")
+    plt.tight_layout()
+    plot_path = os.path.join(save_dir, f"results_plot_{args.task}_sparsity{int(args.sparsity * 100)}.png")
     plt.savefig(plot_path, dpi=150, bbox_inches="tight")
+    print(f"Plot saved to {plot_path}")
     plt.show()
-    print(f"Plot saved to: {plot_path}")

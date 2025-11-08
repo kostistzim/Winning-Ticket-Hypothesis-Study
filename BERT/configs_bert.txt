@@ -1,0 +1,2 @@
+--task sst2 --sparsity 0.6 --epochs 3 --batch_size 32 --lr 2e-5
+--task qqp --sparsity 0.9 --epochs 3 --batch_size 32 --lr 2e-5
