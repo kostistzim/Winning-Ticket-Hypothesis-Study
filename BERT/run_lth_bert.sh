@@ -1,6 +1,6 @@
 #!/bin/bash
-#BSUB -J "bert_lth[1-2]%2"
-#BSUB -q gpua40
+#BSUB -J "bert_lth[1-6]%6"
+#BSUB -q gpua100
 #BSUB -gpu "num=1:mode=exclusive_process"
 #BSUB -n 4
 #BSUB -W 24:00

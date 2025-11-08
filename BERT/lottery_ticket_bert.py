@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 # ==========================================
 #  LOTTERY TICKET HYPOTHESIS FOR BERT
-#  Corrected version with proper pruning
+#  Corrected version with proper pruning + SEED support
 # ==========================================
 
 import os
 import json
 import argparse
+import random
 import torch
 import torch.nn as nn
 import torch.nn.utils.prune as prune
@@ -27,6 +28,21 @@ from datasets import load_dataset
 save_dir = "./models"
 os.makedirs(save_dir, exist_ok=True)
 print(f"Models will be saved to: {save_dir}")
+
+
+# ==========================================
+#  SEED SETTING
+# ==========================================
+def set_seed(seed):
+    """Set seed for reproducibility"""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    # Make deterministic (may reduce performance slightly)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    print(f"🌱 Seed set to: {seed}")
 
 
 # ==========================================
@@ -169,7 +185,7 @@ class LotteryTicketBERT(nn.Module):
 class IterativeMagnitudePruning:
     """Iterative Magnitude Pruning using torch.nn.utils.prune"""
 
-    def __init__(self, model, pruning_rate=0.2):
+    def __init__(self, model, pruning_rate=0.1):
         self.model = model
         self.pruning_rate = pruning_rate
         self.current_sparsity = 0.0
@@ -271,13 +287,17 @@ def lottery_ticket_training(
         task_name="sst2",
         model_name="bert-base-uncased",
         target_sparsity=0.9,
-        pruning_rate=0.2,
+        pruning_rate=0.1,
         warmup_epochs=1,
         epochs_per_round=2,
         batch_size=16,
         learning_rate=2e-5,
         subset_size=1000,
+        seed=42,
 ):
+    # Set seed first
+    set_seed(seed)
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     train_loader, val_loader, num_labels = load_and_process_datasets(task_name, tokenizer, batch_size, subset_size)
@@ -302,7 +322,12 @@ def lottery_ticket_training(
 
     # Save these weights as the "winning ticket initialization"
     model.save_initial_weights()
-    print("✓ Initial weights saved after warmup\n")
+    print("✓ Initial weights saved after warmup")
+
+    # Save the dense model (0% sparsity) after warmup
+    save_model_local(model, task_name, sparsity=0.0,
+                     history={"sparsity": [0.0], "train_acc": [train_acc], "val_acc": [val_acc]}, seed=seed)
+    print()
 
     # STEP 2: Iterative Magnitude Pruning
     pruner = IterativeMagnitudePruning(model, pruning_rate)
@@ -352,19 +377,24 @@ def lottery_ticket_training(
     # Make pruning permanent at the end
     pruner.make_pruning_permanent()
 
+    # Save the final sparse model
+    print("💾 Saving final sparse model...")
+    save_model_local(model, task_name, current_sparsity, history, seed=seed)
+
     return model, history
 
 
 # ==========================================
 #  SAVE UTILITIES
 # ==========================================
-def save_model_local(model, task_name, sparsity, history=None):
-    filename = f"lottery_ticket_{task_name}_sparsity{int(sparsity * 100)}.pt"
+def save_model_local(model, task_name, sparsity, history=None, seed=42):
+    filename = f"lottery_ticket_{task_name}_sparsity{int(sparsity * 100)}_seed{seed}.pt"
     filepath = os.path.join(save_dir, filename)
 
     checkpoint = {
         "model_state_dict": model.state_dict(),
         "sparsity": sparsity,
+        "seed": seed,
         "history": history or {},
     }
     torch.save(checkpoint, filepath)
@@ -375,6 +405,7 @@ def save_model_local(model, task_name, sparsity, history=None):
     json_summary = {
         "task": task_name,
         "sparsity": sparsity,
+        "seed": seed,
         "history": history or {},
     }
     with open(json_path, "w") as f:
@@ -396,10 +427,11 @@ if __name__ == "__main__":
     parser.add_argument("--subset", type=int, default=None, help="Subset size for quick testing. Paper: full dataset")
     parser.add_argument("--batch_size", type=int, default=32, help="Batch size. Paper: 32 for both tasks")
     parser.add_argument("--lr", type=float, default=2e-5, help="Learning rate. Paper: 2e-5 for both tasks")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
     args = parser.parse_args()
 
     print(f"\n{'=' * 60}")
-    print(f"Running {args.task.upper()} with target sparsity {args.sparsity}")
+    print(f"Running {args.task.upper()} with target sparsity {args.sparsity} | Seed: {args.seed}")
     print(f"{'=' * 60}\n")
 
     # Use full dataset if subset not specified
@@ -413,9 +445,12 @@ if __name__ == "__main__":
         batch_size=args.batch_size,
         learning_rate=args.lr,
         subset_size=subset_size,
+        seed=args.seed,
     )
 
-    save_model_local(model, args.task, history["sparsity"][-1], history)
+    # Note: Models are saved inside lottery_ticket_training()
+    # - Dense model (0% sparsity) saved after warmup
+    # - Sparse model (target sparsity) saved at the end
 
     # Plot results
     plt.figure(figsize=(10, 6))
@@ -423,11 +458,12 @@ if __name__ == "__main__":
     plt.plot(history["sparsity"], history["train_acc"], marker="s", linewidth=2, markersize=8, label="Training")
     plt.xlabel("Sparsity", fontsize=12)
     plt.ylabel("Accuracy", fontsize=12)
-    plt.title(f"BERT Lottery Ticket Hypothesis ({args.task.upper()})", fontsize=14)
+    plt.title(f"BERT Lottery Ticket Hypothesis ({args.task.upper()}) - Seed {args.seed}", fontsize=14)
     plt.legend(fontsize=11)
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
-    plot_path = os.path.join(save_dir, f"results_plot_{args.task}_sparsity{int(args.sparsity * 100)}.png")
+    plot_path = os.path.join(save_dir,
+                             f"results_plot_{args.task}_sparsity{int(args.sparsity * 100)}_seed{args.seed}.png")
     plt.savefig(plot_path, dpi=150, bbox_inches="tight")
     print(f"Plot saved to {plot_path}")
     plt.show()
