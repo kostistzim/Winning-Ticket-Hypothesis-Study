@@ -388,17 +388,35 @@ def lottery_ticket_training(
 #  SAVE UTILITIES
 # ==========================================
 def save_model_local(model, task_name, sparsity, history=None, seed=42):
+    """
+    Save model checkpoint with proper state dict and mask extraction.
+    """
     filename = f"lottery_ticket_{task_name}_sparsity{int(sparsity * 100)}_seed{seed}.pt"
     filepath = os.path.join(save_dir, filename)
 
+    # ✅ FIXED: Get state dict from the inner model
+    state_dict = model.model.state_dict()
+
+    # ✅ ADDED: Extract pruning masks if they exist
+    mask_dict = {}
+    for module_name, module in model.model.named_modules():
+        # Check if module has pruning applied
+        if hasattr(module, 'weight_mask'):
+            # The mask is stored as 'weight_mask' after pruning
+            mask_dict[f"{module_name}.weight"] = module.weight_mask.clone()
+
     checkpoint = {
-        "model_state_dict": model.state_dict(),
+        "model_state_dict": state_dict,  # ✅ Now contains proper 'bert.' and 'classifier.' keys
+        "mask_dict": mask_dict if mask_dict else None,  # ✅ Save masks separately
         "sparsity": sparsity,
         "seed": seed,
         "history": history or {},
     }
+
     torch.save(checkpoint, filepath)
     print(f"Model saved to {filepath}")
+    print(f"  - State dict keys: {len(state_dict)}")
+    print(f"  - Masks saved: {len(mask_dict)}")
 
     # Save JSON summary (without tensors)
     json_path = filepath.replace(".pt", "_summary.json")
@@ -406,6 +424,7 @@ def save_model_local(model, task_name, sparsity, history=None, seed=42):
         "task": task_name,
         "sparsity": sparsity,
         "seed": seed,
+        "num_masks": len(mask_dict),
         "history": history or {},
     }
     with open(json_path, "w") as f:
