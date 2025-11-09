@@ -1,9 +1,3 @@
-#!/usr/bin/env python3
-# ==========================================
-#  LOTTERY TICKET HYPOTHESIS FOR BERT
-#  Corrected version with proper pruning + SEED support
-# ==========================================
-
 import os
 import json
 import argparse
@@ -11,30 +5,20 @@ import random
 import torch
 import torch.nn as nn
 import torch.nn.utils.prune as prune
+from carbontracker.tracker import CarbonTracker
 from torch.utils.data import DataLoader
 import numpy as np
 import matplotlib.pyplot as plt
 from tqdm.auto import tqdm
-from transformers import (
-    AutoTokenizer,
-    AutoModel,
-    get_linear_schedule_with_warmup,
-)
+from transformers import AutoTokenizer, AutoModel, get_linear_schedule_with_warmup
 from datasets import load_dataset
 
-# ==========================================
-#  GLOBAL SETTINGS
-# ==========================================
 save_dir = "./models"
 os.makedirs(save_dir, exist_ok=True)
 print(f"Models will be saved to: {save_dir}")
 
 
-# ==========================================
-#  SEED SETTING
-# ==========================================
 def set_seed(seed):
-    """Set seed for reproducibility"""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -42,12 +26,7 @@ def set_seed(seed):
     # Make deterministic (may reduce performance slightly)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-    print(f"🌱 Seed set to: {seed}")
 
-
-# ==========================================
-#  DATA PROCESSING
-# ==========================================
 class DatasetProcessor:
     def __init__(self, tokenizer, max_length=128):
         self.tokenizer = tokenizer
@@ -116,9 +95,6 @@ def load_and_process_datasets(task_name, tokenizer, batch_size=32, subset_size=1
     return train_loader, val_loader, num_labels
 
 
-# ==========================================
-#  MODEL DEFINITIONS
-# ==========================================
 class BertForCustomTask(nn.Module):
     """Custom BERT model with classification head"""
 
@@ -148,7 +124,6 @@ class BertForCustomTask(nn.Module):
 
 
 class LotteryTicketBERT(nn.Module):
-    """BERT model with lottery ticket pruning and rewinding"""
 
     def __init__(self, model_name="bert-base-uncased", num_labels=2):
         super().__init__()
@@ -179,11 +154,7 @@ class LotteryTicketBERT(nn.Module):
         return self.model(**kwargs)
 
 
-# ==========================================
-#  PRUNING WRAPPER (CORRECTED)
-# ==========================================
 class IterativeMagnitudePruning:
-    """Iterative Magnitude Pruning using torch.nn.utils.prune"""
 
     def __init__(self, model, pruning_rate=0.1):
         self.model = model
@@ -192,14 +163,12 @@ class IterativeMagnitudePruning:
         self.pruned_modules = []  # Track pruned modules
 
     def apply_pruning(self):
-        """Apply global magnitude pruning across all eligible parameters"""
         print(f"Applying global pruning (target sparsity increment: {self.pruning_rate * 100:.1f}%)")
 
-        # Collect all parameters to prune (only once if first iteration)
+        # Collect all parameters to prune
         if not self.pruned_modules:
             for module_name, module in self.model.model.named_modules():
                 if hasattr(module, "weight") and isinstance(module.weight, torch.Tensor):
-                    # Exclude LayerNorm and embedding layers
                     if "LayerNorm" not in module_name and "embeddings" not in module_name:
                         self.pruned_modules.append((module, "weight"))
 
@@ -208,7 +177,6 @@ class IterativeMagnitudePruning:
         new_target_sparsity = min(current_sparsity + self.pruning_rate, 0.99)
 
         # Apply global unstructured pruning
-        # Note: amount is relative to unpruned weights
         if current_sparsity < new_target_sparsity:
             # Calculate the fraction of remaining weights to prune
             remaining_weights = 1.0 - current_sparsity
@@ -220,11 +188,8 @@ class IterativeMagnitudePruning:
                 amount=fraction_to_prune,
             )
 
-        # DO NOT call prune.remove() here - we want to keep the masks!
-        # The masks will accumulate across iterations
-
     def make_pruning_permanent(self):
-        """Remove pruning reparameterization (call only at the very end)"""
+        """Remove pruning reparameterization"""
         for module, name in self.pruned_modules:
             if prune.is_pruned(module):
                 prune.remove(module, name)
@@ -243,9 +208,6 @@ class IterativeMagnitudePruning:
         return self.current_sparsity
 
 
-# ==========================================
-#  TRAINING & EVALUATION
-# ==========================================
 def train_epoch(model, loader, optimizer, scheduler, device):
     model.train()
     total_loss, correct, total = 0, 0, 0
@@ -280,9 +242,6 @@ def evaluate(model, loader, device):
     return correct / total
 
 
-# ==========================================
-#  MAIN LOOP WITH ITERATIVE PRUNING
-# ==========================================
 def lottery_ticket_training(
         task_name="sst2",
         model_name="bert-base-uncased",
@@ -295,7 +254,6 @@ def lottery_ticket_training(
         subset_size=1000,
         seed=42,
 ):
-    # Set seed first
     set_seed(seed)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -304,7 +262,7 @@ def lottery_ticket_training(
 
     model = LotteryTicketBERT(model_name, num_labels).to(device)
 
-    # STEP 1: Warmup training to get initial weights
+    # Step 1: Warmup training
     print(f"\n{'=' * 60}")
     print(f"WARMUP TRAINING ({warmup_epochs} epochs)")
     print(f"{'=' * 60}")
@@ -315,25 +273,35 @@ def lottery_ticket_training(
         optimizer, num_warmup_steps=total_steps // 10, num_training_steps=total_steps
     )
 
+    tracker = CarbonTracker(
+        epochs=warmup_epochs + (epochs_per_round * 10),
+        log_dir='carbontracker/',
+        log_file_prefix=f"bert_{task_name}_seed={seed}_sparsity={target_sparsity}"
+    )
+
     for epoch in range(warmup_epochs):
+        tracker.epoch_start()
         train_loss, train_acc = train_epoch(model, train_loader, optimizer, scheduler, device)
         val_acc = evaluate(model, val_loader, device)
         print(f"Warmup Epoch {epoch + 1}/{warmup_epochs} | Train: {train_acc:.2%} | Val: {val_acc:.2%}")
+        tracker.epoch_end()
 
     # Save these weights as the "winning ticket initialization"
     model.save_initial_weights()
-    print("✓ Initial weights saved after warmup")
+    print("Initial weights saved after warmup")
 
     # Save the dense model (0% sparsity) after warmup
     save_model_local(model, task_name, sparsity=0.0,
                      history={"sparsity": [0.0], "train_acc": [train_acc], "val_acc": [val_acc]}, seed=seed)
     print()
 
-    # STEP 2: Iterative Magnitude Pruning
+    # Step 2: Iterative Magnitude Pruning
     pruner = IterativeMagnitudePruning(model, pruning_rate)
     history = {"sparsity": [0.0], "train_acc": [train_acc], "val_acc": [val_acc]}
     current_sparsity = 0.0
     iteration = 0
+
+    tracker = CarbonTracker(epochs=1000, log_dir="./carbon_logs", monitor_epochs=-1)
 
     while current_sparsity < target_sparsity:
         iteration += 1
@@ -348,7 +316,7 @@ def lottery_ticket_training(
 
         # Rewind weights to initial values (keeping masks)
         model.rewind_weights()
-        print("✓ Weights rewound to initialization")
+        print("Weights rewound to initialization")
 
         # Train the pruned network
         optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
@@ -358,9 +326,13 @@ def lottery_ticket_training(
         )
 
         for epoch in range(epochs_per_round):
+            tracker.epoch_start()
             train_loss, train_acc = train_epoch(model, train_loader, optimizer, scheduler, device)
             val_acc = evaluate(model, val_loader, device)
             print(f"Epoch {epoch + 1}/{epochs_per_round} | Train: {train_acc:.2%} | Val: {val_acc:.2%}")
+            tracker.epoch_end()
+
+        tracker.stop()
 
         history["sparsity"].append(current_sparsity)
         history["train_acc"].append(train_acc)
@@ -371,33 +343,24 @@ def lottery_ticket_training(
             break
 
     print(f"\n{'=' * 60}")
-    print(f"✅ IMP COMPLETE | Final sparsity: {current_sparsity:.2%}")
+    print(f"Final sparsity: {current_sparsity:.2%}")
     print(f"{'=' * 60}\n")
 
     # Make pruning permanent at the end
     pruner.make_pruning_permanent()
 
     # Save the final sparse model
-    print("💾 Saving final sparse model...")
     save_model_local(model, task_name, current_sparsity, history, seed=seed)
 
     return model, history
 
 
-# ==========================================
-#  SAVE UTILITIES
-# ==========================================
 def save_model_local(model, task_name, sparsity, history=None, seed=42):
-    """
-    Save model checkpoint with proper state dict and mask extraction.
-    """
+    """Save model checkpoint with proper state dict and mask extraction."""
     filename = f"lottery_ticket_{task_name}_sparsity{int(sparsity * 100)}_seed{seed}.pt"
     filepath = os.path.join(save_dir, filename)
 
-    # ✅ FIXED: Get state dict from the inner model
     state_dict = model.model.state_dict()
-
-    # ✅ ADDED: Extract pruning masks if they exist
     mask_dict = {}
     for module_name, module in model.model.named_modules():
         # Check if module has pruning applied
@@ -406,8 +369,8 @@ def save_model_local(model, task_name, sparsity, history=None, seed=42):
             mask_dict[f"{module_name}.weight"] = module.weight_mask.clone()
 
     checkpoint = {
-        "model_state_dict": state_dict,  # ✅ Now contains proper 'bert.' and 'classifier.' keys
-        "mask_dict": mask_dict if mask_dict else None,  # ✅ Save masks separately
+        "model_state_dict": state_dict,
+        "mask_dict": mask_dict if mask_dict else None,
         "sparsity": sparsity,
         "seed": seed,
         "history": history or {},
@@ -418,7 +381,7 @@ def save_model_local(model, task_name, sparsity, history=None, seed=42):
     print(f"  - State dict keys: {len(state_dict)}")
     print(f"  - Masks saved: {len(mask_dict)}")
 
-    # Save JSON summary (without tensors)
+    # Save JSON summary
     json_path = filepath.replace(".pt", "_summary.json")
     json_summary = {
         "task": task_name,
@@ -433,9 +396,6 @@ def save_model_local(model, task_name, sparsity, history=None, seed=42):
     return filepath
 
 
-# ==========================================
-#  MAIN EXECUTION ENTRY POINT
-# ==========================================
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run Lottery Ticket Hypothesis with torch pruning on BERT.")
     parser.add_argument("--task", type=str, default="sst2", choices=["sst2", "qqp"], help="Task to train on.")
@@ -466,10 +426,6 @@ if __name__ == "__main__":
         subset_size=subset_size,
         seed=args.seed,
     )
-
-    # Note: Models are saved inside lottery_ticket_training()
-    # - Dense model (0% sparsity) saved after warmup
-    # - Sparse model (target sparsity) saved at the end
 
     # Plot results
     plt.figure(figsize=(10, 6))

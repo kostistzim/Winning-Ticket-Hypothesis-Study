@@ -1,8 +1,3 @@
-#!/usr/bin/env python3
-# ==========================================
-#  CREATE ENSEMBLE TICKET (MERGED MASK + SEED + SPARSITY)
-# ==========================================
-
 import torch
 import os
 import argparse
@@ -10,8 +5,8 @@ import re
 
 def load_model_state(path):
     print(f"Loading: {path}")
-    ckpt = torch.load(path, map_location="cpu")
-    return ckpt["model_state_dict"], ckpt
+    checkpoint = torch.load(path, map_location="cpu")
+    return checkpoint["model_state_dict"], checkpoint
 
 def extract_seed_from_filename(filename):
     m = re.search(r"seed(\d+)", filename)
@@ -54,7 +49,7 @@ def save_ensemble_ticket(merged_state, meta_a, meta_b, task_a, task_b, seed, spa
         "sparsity": sparsity,
         "tasks": [task_a, task_b]
     }, out_path)
-    print(f"✅ Ensemble ticket saved to: {out_path} ({sparsity*100:.2f}% sparse)")
+    print(f"Ensemble ticket saved to: {out_path} ({sparsity*100:.2f}% sparse)")
 
 def main():
     parser = argparse.ArgumentParser(description="Combine two lottery tickets into an ensemble ticket.")

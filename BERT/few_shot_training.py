@@ -1,28 +1,8 @@
-#!/usr/bin/env python3
-# ==========================================
-#  FEW-SHOT TRANSFER TRAINING FOR LOTTERY TICKETS
-#  (Reuses modules from lottery_ticket_training.py)
-# ==========================================
-
-import os
-import json
 import torch
-import argparse
-from tqdm.auto import tqdm
 from transformers import AutoTokenizer, get_linear_schedule_with_warmup
 
-# Import reusable parts
-from lottery_ticket_bert import (
-    set_seed,
-    BertForCustomTask,
-    load_and_process_datasets,
-    train_epoch,
-    evaluate,
-)
+from lottery_ticket_bert import *
 
-# ==========================================
-#  FEW-SHOT TRAINING FUNCTION
-# ==========================================
 def fewshot_transfer(
     checkpoint_path,
     target_task,
@@ -42,13 +22,13 @@ def fewshot_transfer(
     print(f"Few-shot fine-tuning | Target: {target_task.upper()} | Mode: {mode} | Seed: {seed}")
     print(f"{'='*60}\n")
 
-    # --- Load checkpoint ---
-    ckpt = torch.load(checkpoint_path, map_location="cpu")
-    state_dict = ckpt["model_state_dict"]
+    # Load checkpoint
+    checkpoint = torch.load(checkpoint_path, map_location="cpu")
+    state_dict = checkpoint["model_state_dict"]
     model_name = "bert-base-uncased"
     tokenizer = AutoTokenizer.from_pretrained(model_name)
 
-    # --- Load 128 examples from target task ---
+    # Load 128 examples from target task
     train_loader, val_loader, num_labels = load_and_process_datasets(
         task_name=target_task,
         tokenizer=tokenizer,
@@ -56,7 +36,7 @@ def fewshot_transfer(
         subset_size=fewshot_size,
     )
 
-    # --- Initialize model and load weights ---
+    # Initialize model and load weights
     model = BertForCustomTask(model_name, num_labels)
     model.load_state_dict(state_dict, strict=False)
     model.to(device)
@@ -65,9 +45,9 @@ def fewshot_transfer(
     if mode == "headonly":
         for p in model.bert.parameters():
             p.requires_grad = False
-        print("🧊 Head-only mode: encoder frozen.")
+        print("> Head-only mode: encoder frozen.")
     else:
-        print("🔥 Full fine-tuning mode: all parameters trainable.")
+        print("> Full fine-tuning mode: all parameters trainable.")
 
     optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=learning_rate)
     total_steps = len(train_loader) * epochs
@@ -116,12 +96,9 @@ def fewshot_transfer(
             indent=2,
         )
 
-    print(f"\n✅ Saved few-shot model to {out_model_path}")
-    print(f"📄 Summary saved to {out_json}\n")
+    print(f"Saved few-shot model to {out_model_path}")
+    print(f"Summary saved to {out_json}\n")
 
-# ==========================================
-#  MAIN ENTRY POINT
-# ==========================================
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Few-shot fine-tuning for transfer experiments.")
     parser.add_argument("--checkpoint", required=True, help="Path to the model checkpoint (.pt)")

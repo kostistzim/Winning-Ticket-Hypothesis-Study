@@ -11,11 +11,6 @@
 
 set -euo pipefail
 
-echo "🚀 Starting BERT-LTH job $LSB_JOBID (index $LSB_JOBINDEX) on $HOSTNAME"
-
-# ==========================================
-#  ENVIRONMENT SETUP
-# ==========================================
 module load python3/3.11.9
 module load cuda/12.1
 
@@ -23,23 +18,16 @@ export PATH="$HOME/.local/bin:$PATH"
 unset PYTHONHOME
 unset PYTHONPATH
 
-# Sync your Python environment if you use uv (optional)
-uv sync || echo "⚠️ uv sync skipped (not installed or no lockfile)"
+uv sync || echo "uv sync skipped (not installed or no lockfile)"
 
-# ==========================================
-#  CONFIG PARSING
-# ==========================================
 CONFIG_LINE=$(sed -n "${LSB_JOBINDEX}p" configs_bert.txt)
 if [ -z "$CONFIG_LINE" ]; then
-  echo "❌ No config line found for job index $LSB_JOBINDEX in configs_bert.txt"
+  echo "No config line found for job index $LSB_JOBINDEX in configs_bert.txt"
   exit 1
 fi
 
-echo "▶️ Running config: $CONFIG_LINE"
+echo "Running config: $CONFIG_LINE"
 
-# ==========================================
-#  EXECUTION
-# ==========================================
 uv run python -u lottery_ticket_bert.py $CONFIG_LINE
 
-echo "✅ Job $LSB_JOBID (index $LSB_JOBINDEX) finished successfully."
+echo "Job $LSB_JOBID (index $LSB_JOBINDEX) finished successfully."
